@@ -1,151 +1,204 @@
-const express = require('express')
-const app = express()
-
+const express = require("express");
+const app = express();
+const { Pool } = require("pg");
 const bodyParser = require("body-parser");
 app.use(bodyParser.json());
 
-const {Pool} = require('pg');
-
 const pool = new Pool({
-    user: 'postgres',
-    password: 'manresa1',
-    host: 'localhost',
-    database: 'cyf_ecommerce',
-    port: 5432
+  user: "postgres",
+  host: "localhost",
+  database: "cyf_ecommerce",
+  password: "PULIDO",
+  port: 5432,
 });
 
-const listAllProducts =
-    "select products.product_name , suppliers.supplier_name " +
-    "from products join suppliers on products.supplier_id = suppliers.id"
+app.get("/customers", function (req, res) {
+  pool
+    .query("SELECT * FROM customers")
+    .then((result) => res.json(result.rows))
+    .catch((e) => console.error(e));
+});
 
-const listProductsByName =
-    'select products.product_name, suppliers.supplier_name ' +
-    ' from products join suppliers on products.supplier_id = suppliers.id ' +
-    ' where products.product_name like $1'
+app.get("/suppliers", function (req, res) {
+  pool.query("SELECT * FROM suppliers", (error, result) => {
+    res.json(result.rows);
+  });
+});
 
-
-const customersById = 
-    'select * from customers where id = $1'
-
-const createNewProduct = 
-'INSERT INTO products (product_name, unit_price, supplier_id) VALUES ($1,$2,$3)';
-
-const createNewOrder = 
-'insert into orders(order_date, order_reference, customer_id) values ($1, $2, $3)'
-
-app.get('/customers', (req, res) => {
-    pool.query('select * from customers', (error, result) => {
-        res.json(result.rows)
-    })
-})
-
-
+/*Update the previous GET endpoint /products to filter the list of products by name using a query parameter, for example /products?name=Cup. This endpoint should still work even if you don't use the name query parameter!*/
 app.get("/products", function (req, res) {
-    let productNameLike = req.query.productName
-
-    if (!productNameLike) {
-        // Client is not sending any name
-        pool.query(listAllProducts, (error, result) => {
-            if (error) {
-                console.error(e)
-                res.send('Error al buscar productos')
-            } else {
-                res.json(result.rows);
-            }
-        });
-    } else {
-        pool.query(listProductsByName, ['%' + productNameLike + '%'])
-            .then(result => {res.json(result.rows)})
-            .catch(e => {
-                console.error(e)
-                res.send('Error al buscar productos pro nombre')
-            })
+  pool.query(
+    "SELECT product_name, supplier_name FROM products AS p INNER JOIN suppliers AS s ON s.id=supplier_id",
+    (error, result) => {
+      res.json(result.rows);
     }
+  );
 });
 
-app.get('/customers/:customersId', (req, res) => {
-    let customersId = req.params.customersId
-    pool.query(customersById,[customersId], (error, result) => {
-        res.json(result.rows)
+
+//Add a new GET endpoint /customers/:customerId to load a single customer by ID.//
+app.get("/customers/:customerId", function (req, res) {
+  const customerId = req.params.customerId;
+
+pool
+    .query('SELECT * FROM customers WHERE id=$1', [customerId])
+    .then((result) => res.json(result.rows))
+    .catch((e) => console.error(e));
+}
+  );
+
+//Add a new POST endpoint /customers to create a new customer.//
+  app.post("/customers", function (req, res) {
+    const newCustomerName = req.body.name;
+    const newCustomerAddress = req.body.address;
+    const newCustomerCity = req.body.city;
+    const newCustomerCountry = req.body.country;
+  
+    const query =
+      "INSERT INTO customers (name, address, city,country) VALUES ($1, $2, $3, $4) returning id";
+  
+    pool
+      .query(query, [
+        newCustomerName,
+        newCustomerAddress,
+        newCustomerCity,
+        newCustomerCountry,
+      ])
+      .then(() => res.send("Customer created!"))
+      .catch((e) => console.error(e));
+  });
+
+//Add a new POST endpoint /products to create a new product (with a product name, a price and a supplier id). Check that the price is a positive integer and that the supplier ID exists in the database, otherwise return an error.//
+  app.post("/products", function (req, res) {
+    const newProductName = req.body.product_name;
+    const newProductPrice = req.body.unit_price;
+    const newProductSupplier = req.body.supplier_id;
+   
+
+    if (!Number.isInteger(newProductPrice) || newProductPrice <= 0) {
+      return res.status(400).send('The price is a positive integer.');
+    }
+  
+    pool.query(`SELECT * FROM suppliers AS s WHERE s.id=$1`, [newProductSupplier]).then((result) => {
+      if (result.rows.length === 0) {
+        return res.status(400).send('Suppliers not exists!');
+      } else {
+        const query = 'INSERT INTO products (product_name, unit_price, supplier_id) VALUES ($1, $2, $3) RETURNING id';
+    pool
+          .query(query, [newProductName, newProductPrice, newProductSupplier])
+          .then((result) => res.status(201).json({ productId: result.rows[0].id }))
+          .catch((e) => console.error(e));
+      }
+    });
+  });
+
+  //Add a new POST endpoint /customers/:customerId/orders to create a new order (including an order date, and an order reference) for a customer. Check that the customerId corresponds to an existing customer or return an error.//
+  app.post("/customers/:customerId/orders", function (req, res) {
+    const newOrderDate = req.body.order_date;
+    const newOrderReference = req.body.order_reference;
+    const newOrderCustomerId = req.params.customerId;
+
+  pool.query(`SELECT * FROM customers AS c WHERE c.id=$1`, [newOrderCustomerId]).then((result) => {
+      if (result.rows.length === 0) {
+        return res.status(400).send('Customer doesn´t exists!');
+      } else {
+        const query = 'INSERT INTO orders (order_date, order_reference, customer_id) VALUES ($1, $2, $3) RETURNING id';
+        pool
+          .query(query, [newOrderDate, newOrderReference,newOrderCustomerId])
+          .then((result) => res.status(201).json({ orderId: result.rows[0].id }))
+          .catch((e) => console.error(e));
+
+  }
+});
+});
+
+  //Add a new PUT endpoint /customers/:customerId to update an existing customer (name, address, city and country).//
+  app.put("/customers/:customerId", function (req, res) {
+    const modifiedName = req.body.name;
+    const modifiedAddress = req.body.address;
+    const modifiedCity = req.body.city;
+    const modifiedCountry = req.body. country;
+    const modifiedCustomerId = req.params.customerId;
+
+
+  pool.query(`UPDATE customers SET name=$1, address=$2, city=$3, country=$4 WHERE id=$5 RETURNING id`,
+  [modifiedName, modifiedAddress, modifiedCity, modifiedCountry, modifiedCustomerId])
+  .then((result) => res.status(201).json({ customerId: result.rows[0].id }))
+  .catch((e) => console.error(e));
+});
+
+  //Add a new DELETE endpoint /orders/:orderId to delete an existing order along all the associated order items.//
+  /*app.get("/orders", function (req, res) {
+    pool
+      .query("SELECT * FROM orders")
+      .then((result) => res.json(result.rows))
+      .catch((e) => console.error(e));
+  });*/
+
+  app.delete('/orders/:orderId', function(req, res) {
+    const orderId = req.params.orderId;
+
+    pool
+    .query(`SELECT * FROM orders WHERE id=$1`, [orderId])
+    .then(result => {
+        if (result.rows.length > 0){
+            const query =
+            `DELETE FROM order_items where order_id = ${orderId};
+            DELETE FROM orders where id = ${orderId}`;
+    pool
+            .query(query)
+            .then(() => res.send("Order Delete!"))
+            .catch((e) => console.error(e));
+        }
+        else{
+            return res
+            .status(400)
+            .send("The order not exists!");
+        }
     })
 });
-
-
-//Add a new POST endpoint /products to create a new product (with a product name, a price and a supplier id). Check that the price is a positive integer and that the supplier ID exists in the database, otherwise return an error.
-
-app.post('/products', (req, res) => {
-    let newProductName = req.body.productName
-    let newProductUnitPrice = req.body.unitPrice
-    let newProductSupplierId = req.body.supplierId
-
-    // TODO Validar que el supplierId existe
     
-    // TODO Validar que el nombre de producto no existe
-    
-    if (isNaN(newProductUnitPrice) || newProductUnitPrice < 0) {
-        res.send('el precio debe ser numerico y mayor a 0')
+ 
+
+  //Add a new DELETE endpoint /customers/:customerId to delete an existing customer only if this customer doesn't have orders.//
+  
+  app.delete("/customers/:customerId", function (req, res) {
+    const customerId = req.params.customerId;
+
+  pool.query( `SELECT * FROM orders AS o WHERE o.customer_id=$1`, [customerId])
+  .then((result) => {
+    if (result.rows.length > 0) {
+      return res.status(400).send('This customer has orders!');
     } else {
-        pool.query(createNewProduct, [newProductName, newProductUnitPrice, newProductSupplierId], (error, result) => {
-            if (error) {
-                console.log(error);
-            } else {
-                res.json('producto creado')
-            }
-        })
-    }
-});
+      pool
+        .query('DELETE FROM customers WHERE id=$1', [customerId])
+        .then(() => res.send(`Customer ${customerId} deleted!`))
+        .catch((e) => console.error(e));
+      }
+    });
+    });
 
+  //Add a new GET endpoint /customers/:customerId/orders to load all the orders along the items in the orders of a specific customer. Especially, the following information should be returned: order references, order dates, product names, unit prices, suppliers and quantities.//
+  
+  app.get("/customers/:customerId/orders", function (req, res) {
+    const customerId = req.params.customerId;
 
+pool
+    .query(
+    `SELECT order_reference, order_date, product_name, unit_price, supplier_name, quantity
+    FROM customers AS c
+    INNER JOIN orders AS o ON c.id=o.customer_id
+    INNER JOIN order_items AS i ON o.id=i.order_id
+    INNER JOIN products AS p ON p.id=i.product_id
+    INNER JOIN suppliers AS s ON s.id=p.supplier_id
+    WHERE c.id=$1`,
+      [customerId]
+    )
+    .then((result) => res.json(result.rows))
+    .catch((e) => console.error(e));
+  });
 
-//Create a new order:
-app.post('/customers/:customerId/orders', (req, res) => {
-    // req
-    //   query -> Acceso a los campos definidos despues del ? (query string)
-    //   params -> Acceso a los valores definidos en la URL del endpoint
-    //   body -> Acceso al JSON que llega en el body para POST y PUT
-
-    let customerId = req.params.customerId
-    let orderDate = req.body.orderDate
-    let orderReference = req.body.orderReference
-    
-    // TODO Validar que el orderReference es unico
-
-    pool.query(customersById, [customerId])
-        .then(result => {
-            if (result.rows.length > 0) {
-                pool.query(createNewOrder, [orderDate, orderReference, customerId])
-                    .then(result => res.send('Pedido creado!'))
-                    .catch(error => {
-                        console.error(error)
-                        res.send('Error al crear el pedido')
-                    })
-            } else {
-                res.send(`Customer with id ${customerId} does not exist`)
-            }
-        })
-});
-//Eliminar un customer
-let deleteCustomer = 'delete from customers where id = $1'
-let checkOrdersForCustomer = 'select * from orders where customer_id = $1'
-
-app.delete('/customers/:customerId', (req, res) => {
-    let customerId = req.params.customerId
-
-    pool.query(checkOrdersForCustomer, [customerId])
-        .then(result => {
-            if (result.rows.length === 0) {
-                pool.query(deleteCustomer, [customerId])
-                    .then(result => res.send('Customer eliminado'))
-                    .catch(error => {
-                        console.error(error)
-                        res.send('Error al eliminar el customer')
-                    })
-            } else {
-                res.send('No se puede eliminar el customer porque tiene pedidos')
-            }
-        })
-});
-
-app.listen(3000, function () {
-    console.log("Server is listening on port 3000. Ready to accept requests!");
+ 
+app.listen(4000, function () {
+  console.log("Server is listening on port 4000. Ready to accept requests!");
 });
